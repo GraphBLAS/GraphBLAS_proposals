@@ -11,7 +11,7 @@
 *.da
 *.tcov
 *.gcov
-gmon.out
+*.out
 *.bak
 *.d
 *.gcda 

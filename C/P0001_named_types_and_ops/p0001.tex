@@ -195,7 +195,9 @@ Suppose a user writes a blob to a file with a user-defined type:
 \end{verbatim}}
 
 This is not a good use of \verb'GrB_Matrix_serialize'.  When the file is
-reopened, the user must magically know that the
+reopened, the user must magically know that the blob contains a matrix
+of \verb'GrB_Type WildType'.  How can it know this?  It's not information
+that can be held in the blob itself.
 
 {\footnotesize
 \begin{verbatim}
