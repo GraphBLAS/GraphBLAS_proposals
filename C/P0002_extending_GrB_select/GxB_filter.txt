@@ -1,0 +1,163 @@
+Proposed GxB extension:  a method like GrB_select but with more options.
+Call it GxB_filter?  Or an extended GxB_select?
+
+C<M> += filter (A, lots of stuff) is like C<M> += select (A, selectop),
+but with a richer set of terms that can be used to select the entries.
+The output of T = filter (A, ...) is the same size as A, just with fewer
+entries than A (some are selected and some are not).
+
+The selection/filter of entries in A needs additional values:
+
+    ROW/COL RANK:  the "row rank" of A(i,j) is the ordinal position of
+        the entry in its row i.  That is, if A(i,j) is the kth value present
+        in A(i,*) then its row rank is k.  The row rank k ranges from 1 to d(i)
+        where d(i) = # of entries in A(i,:).
+
+        the "col rank" is similar.
+
+        Only one kind of rank (row or col) can be provided to the select op,
+        since providing both would be costly.
+
+    VECTOR INPUTS:  Selecting an entry A(i,j) can depend on one or more
+        input vectors of size m or n, where A is m-by-n.  For example,
+        select A(i,j) if comp[i] != comp[j] removes an edge (i,j) if
+        both nodes i and j reside in the same component.
+
+    THUNK: this scalar (called "y" in GrB_select) is still needed.
+
+LAGraph methods that need this:
+
+(1) src/algorithm/LG_CC_FastSV6.c:
+
+    row rank: select the first 4 entries in each A(i,:)
+        A(i,j) is kept if the rank of the entry A(i,j) is in range 1 to 4.
+
+    remove edges in a single component:
+        keep A(i,j) if parent[i] != key and parent[j] != key for a given
+        scalar value key.
+
+
+(2) experimental/algorithm/LAGraph_scc.c
+
+    edge_removal: keep A(i,j) based on 3 vectors M, F, and B:
+        !M[i] && !M[j] && F[i] == F[j] && B[i] == B[j]
+
+    trim_one: keep A(i,j) based on a single vector M:
+        M[i] == M[j]
+
+(3) experimental/algorithm/LAGraph_msf.c
+
+    keep an edge A(i,j) if:
+        (weight[i] == *aij) && (parent[j] == partner[i]);
+
+    keep an edge A(i,j) if:
+        (parent[i] != parent[j]);
+
+
+
+Proposed signature:
+
+    GrB_Info GrB_Matrix_filter_TYPE     // C<M>=accum(C,op(A))
+    (
+        // just like GrB_select for these:
+        GrB_Matrix C,                   // input/output matrix for results
+        const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+        const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+        const GxB_FilterOp op,          // operator to apply to the entries
+        const GrB_Matrix A,             // first input:  matrix A
+        TYPE y,                         // second input: scalar y
+
+        // adding new inputs:
+        const GrB_Vector *RowControl,   // array of nr GrB_Vectors, any types.
+                                        // each are vectors of size nrows(A)
+        int nr,                         // # of row control vectors
+        const GrB_Vector *ColControl,   // array of nc GrB_Vectors, any types.
+                                        // each are vectors of size ncols(A)
+        int nc,                         // # of col control vectors
+
+        // rank:
+        const GxB_RankControl rankcontrol,
+            // ROW_RANK: rank input to the filter op is the row rank
+            // COL_RANK: rank input to the filter op is the col rank
+            // IGNORE: filter op doesn't need the rank input (always zero)
+
+        const GrB_Descriptor desc       // descriptor for C, mask, and A
+    ) ;
+
+
+The filter op would be applied to A(i,j) with the inputs:
+
+    rank: either the row rank, col rank, or zero if no rank input requested
+
+    r, an array size nr of void pointers:  suppose on input nr=3 vectors are
+        given for RowControl.  These 3 vectors can have any combination of
+        data types (no typecasting is done).  Then an array of size 3,
+        call it r, would be passed to the filter op applied to A(i,j) where:
+
+            r [0] = address of the ith entry of vector R0 = RowControl [0],
+                    or NULL if there is no such stored value in R0(i).
+            r [1] = ditto, for the 2nd RowControl vector
+            r [2] = ditto, for the 3rd RowControl vector
+
+    c, an array of size nc of void pointers: for the jth entry in each of the
+        nc ColControl vectors
+
+    The filter op would be responsible for any typecasting from the void *
+    pointers in these arrays r and c.
+
+In all the examples in LAGraph, the RowControl and ColControl vectors are
+full, with all entries present.  If entries are missing, then this can be
+indicated by passing NULL to the filter op for that vector.
+
+Alternatively, if the filter op doesn't tolerate NULL inputs for any given
+vector, then this could be indicated by a fixed default value of the return
+value of the filter op, which can be defined when the filter op is created by
+GxB_FilterOp_new.  Then if any entries are not present in the Row/ColControl
+vectors, GraphBLAS would not call the filter op, and use the default value
+instead.  This could speed up application of the filter op to the input
+matrix, particularly for built-in operators.
+
+Some built-in filter ops could be defined:
+
+    These act like GrB_extract except the output C for C=filter(A,...) has the
+    same size as A.  Only the structure of the Row/ColControl vectors are
+    used:
+
+        FILTER_IN_IN: keep A(i,j) if RowControl(i) and ColControl(j) present
+        FILTER_IN_OUT: keep A(i,j) if RowControl(i) present and ColControl(j)
+            not present
+        FILTER_OUT_IN: keep A(i,j) if RowControl(i) not present and
+            ColControl(j) present
+        FILTER_OUT_OUT: keep A(i,j) if RowControl(i) not present and
+            ColControl(j) not present
+
+        FILTER_MATCH_[TYPE]: keep A(i,j) if RowContol(i) == ColControl(j) and
+            both entries are present.  This is like FILTER_IN_IN but also
+            examines the values of the two entries. The [TYPE] would be
+            BOOL, INT8, INT16, ... etc. (any built-in type).
+        FILTER_MISMATCH_[TYPE]: keep A(i,j) if RowContol(i) != ColControl(j)
+            or if either entry not present
+
+The signature of the filter op would be an extension to the IndexUnaryOp:
+
+typedef void (*GxB_filter_unary_function)
+(
+    // first parameters would be just like the IndexUnaryOp:
+    void *z,            // output value z, of type ztype
+    const void *x,      // input value x of type xtype; value of v(i) or A(i,j)
+    GrB_Index i,        // row index of A(i,j)
+    GrB_Index j,        // column index of A(i,j), or zero for v(i)
+    const void *y,      // input scalar y
+
+    // added stuff for the FilterOp:
+    const void **r,     // RowControl: array of size nr
+    const int32_t nr,
+    const void **c,     // ColControl: array of size nc
+    const int32_t nc,
+    const int64_t rank  // 0 if no rank input, or 1 to degree(i) or degree(j)
+                        // for row rank or col rank, respectively
+) ;
+
+There could be a very small fixed upper limit to the # of RowControl and
+ColControl vectors that could be provided (say 8? or 64?).
+
