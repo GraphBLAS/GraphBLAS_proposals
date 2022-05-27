@@ -161,3 +161,9 @@ typedef void (*GxB_filter_unary_function)
 There could be a very small fixed upper limit to the # of RowControl and
 ColControl vectors that could be provided (say 8? or 64?).
 
+It might also be useful to considered a randomized select operator.  Perhaps
+that could be done without extending GrB_select.
+
+I should add that this is a *very* rough draft.
+
+-- Tim Davis
